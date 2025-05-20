@@ -32,7 +32,6 @@
  * Wi-Fi Functions Config
  */
 #define CONFIG_80211N_HT
-#define CONFIG_80211AC_VHT
 #define CONFIG_RECV_REORDERING_CTRL
 
 /* Set CONFIG_IOCTL_CFG80211 from Makefile */

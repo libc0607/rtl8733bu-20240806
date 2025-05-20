@@ -4952,11 +4952,11 @@ s32 rtw_monitor_xmit_entry(struct sk_buff *skb, struct net_device *ndev)
 			if ((mcs_known & IEEE80211_RADIOTAP_MCS_HAVE_FEC) &&
 			    (mcs_flags & IEEE80211_RADIOTAP_MCS_FEC_LDPC))
 				ldpc = 1;
-			if ((mcs_known & IEEE80211_RADIOTAP_MCS_HAVE_STBC)) {
-				stbc = (mcs_flags &
-					IEEE80211_RADIOTAP_MCS_STBC_MASK) >>
-				       IEEE80211_RADIOTAP_MCS_STBC_SHIFT;
-			}
+			//if ((mcs_known & IEEE80211_RADIOTAP_MCS_HAVE_STBC)) {
+			//	stbc = (mcs_flags &
+			//		IEEE80211_RADIOTAP_MCS_STBC_MASK) >>
+			//	       IEEE80211_RADIOTAP_MCS_STBC_SHIFT;
+			//}
 			break;
 		}
 
@@ -4971,19 +4971,21 @@ s32 rtw_monitor_xmit_entry(struct sk_buff *skb, struct net_device *ndev)
 			if (vht_known &
 			    IEEE80211_RADIOTAP_VHT_KNOWN_BANDWIDTH) {
 				bwidth = iterator.this_arg[3] & 0x1f;
-				if(bwidth >= 1 && bwidth <= 3)
+				//if(bwidth >= 1 && bwidth <= 3)
+				if(bwidth >= 1)
 					bwidth = CHANNEL_WIDTH_40;
-				else if(bwidth >= 4 && bwidth <= 10)
-					bwidth = CHANNEL_WIDTH_80;
+				//else if(bwidth >= 4 && bwidth <= 10)
+				//	bwidth = CHANNEL_WIDTH_80;
 				else
 					bwidth = CHANNEL_WIDTH_20;
 			}
-			if((vht_known & IEEE80211_RADIOTAP_VHT_KNOWN_STBC) &&
-			   (vht_flags & IEEE80211_RADIOTAP_VHT_FLAG_STBC))
-				stbc = 1;
-			if (vht_known & IEEE80211_RADIOTAP_VHT_KNOWN_LDPC_EXTRA_OFDM_SYM &&
-			    vht_flags & IEEE80211_RADIOTAP_VHT_FLAG_LDPC_EXTRA_OFDM_SYM &&
-			    iterator.this_arg[8] & 0x0f)
+			//if((vht_known & IEEE80211_RADIOTAP_VHT_KNOWN_STBC) &&
+			//   (vht_flags & IEEE80211_RADIOTAP_VHT_FLAG_STBC))
+			//	stbc = 1;
+			//if (vht_known & IEEE80211_RADIOTAP_VHT_KNOWN_LDPC_EXTRA_OFDM_SYM &&
+			//    vht_flags & IEEE80211_RADIOTAP_VHT_FLAG_LDPC_EXTRA_OFDM_SYM &&
+			//    iterator.this_arg[8] & 0x0f)
+		        if(iterator.this_arg[8] & 1)
 				ldpc = 1;
 			mcs = (iterator.this_arg[4] >> 4) & 0x0f;
 			nss = iterator.this_arg[4] & 0x0f;
