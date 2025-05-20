@@ -6934,7 +6934,7 @@ struct xmit_frame *_alloc_mgtxmitframe(struct xmit_priv *pxmitpriv, bool once)
 
 	pxmitbuf = rtw_alloc_xmitbuf_ext(pxmitpriv);
 	if (pxmitbuf == NULL) {
-		RTW_INFO(FUNC_ADPT_FMT" alloc xmitbuf fail\n", FUNC_ADPT_ARG(pxmitpriv->adapter));
+		//RTW_INFO(FUNC_ADPT_FMT" alloc xmitbuf fail\n", FUNC_ADPT_ARG(pxmitpriv->adapter));
 		rtw_free_xmitframe(pxmitpriv, pmgntframe);
 		pmgntframe = NULL;
 		goto exit;
@@ -6991,6 +6991,7 @@ void update_monitor_frame_attrib(_adapter *padapter, struct pkt_attrib *pattrib)
 	pattrib->hdrlen = 24;
 	pattrib->nr_frags = 1;
 	pattrib->priority = 7;
+	pattrib->inject = 0xa5;
 	pattrib->mac_id = RTW_DEFAULT_MGMT_MACID;
 	pattrib->qsel = QSLT_MGNT;
 
@@ -7030,7 +7031,7 @@ void update_monitor_frame_attrib(_adapter *padapter, struct pkt_attrib *pattrib)
 
 	pattrib->seqnum = pmlmeext->mgnt_seq;
 
-	pattrib->retry_ctrl = _TRUE;
+	pattrib->retry_ctrl = _FALSE;
 
 	pattrib->mbssid = 0;
 	pattrib->hw_ssn_sel = pxmitpriv->hw_ssn_seq_no;
@@ -7162,15 +7163,15 @@ void update_mgntframe_attrib_addr(_adapter *padapter, struct xmit_frame *pmgntfr
 #endif /* defined(CONFIG_BEAMFORMING) || defined(CONFIG_ANTENNA_DIVERSITY) || defined(CONFIG_RTW_MGMT_QUEUE) */
 }
 
-void dump_mgntframe(_adapter *padapter, struct xmit_frame *pmgntframe)
+s32 dump_mgntframe(_adapter *padapter, struct xmit_frame *pmgntframe)
 {
 	if (RTW_CANNOT_RUN(padapter)) {
 		rtw_free_xmitbuf(&padapter->xmitpriv, pmgntframe->pxmitbuf);
 		rtw_free_xmitframe(&padapter->xmitpriv, pmgntframe);
-		return;
+		return _FAIL;
 	}
 
-	rtw_hal_mgnt_xmit(padapter, pmgntframe);
+	return rtw_hal_mgnt_xmit(padapter, pmgntframe);
 }
 
 s32 dump_mgntframe_and_wait(_adapter *padapter, struct xmit_frame *pmgntframe, int timeout_ms)
@@ -14964,7 +14965,16 @@ operation_by_state:
 
 		val8 = 0; /* survey done */
 		rtw_hal_set_hwreg(padapter, HW_VAR_MLME_SITESURVEY, (u8 *)(&val8));
-
+		
+                /* Dirty patch solving not receiving wfb-ng packets after doing scan
+                   Don't know the reason, but the call above breaks the connection,
+                   so just set monitor mode again here
+                */
+                if (check_fwstate(&padapter->mlmepriv, WIFI_MONITOR_STATE)) {
+                        val8 = _HW_STATE_MONITOR_;
+                        rtw_hal_set_hwreg(padapter, HW_VAR_SET_OPMODE, &val8);
+                }
+                
 		/* turn on phy-dynamic functions */
 		rtw_phydm_ability_restore(padapter);
 
@@ -16067,11 +16077,13 @@ u8 rtw_iqk_hdl(_adapter *padapter, unsigned char *pbuf)
 u8 rtw_set_chbw_hdl(_adapter *padapter, u8 *pbuf)
 {
 	struct set_ch_parm *set_ch_parm;
+	struct mlme_priv *mlme;
 	struct mlme_ext_priv	*pmlmeext = &padapter->mlmeextpriv;
 	u8 ifbmp_s = rtw_mi_get_ld_sta_ifbmp(padapter);
 	struct dvobj_priv *dvobj = adapter_to_dvobj(padapter);
 	u8 u_ch, u_bw, u_offset;
 
+        mlme = &padapter->mlmepriv;
 	if (!pbuf)
 		return H2C_PARAMETERS_ERROR;
 
@@ -16100,6 +16112,13 @@ u8 rtw_set_chbw_hdl(_adapter *padapter, u8 *pbuf)
 		}
 	}
 	
+	// should also update in monitor mode
+	 if (check_fwstate(mlme, WIFI_MONITOR_STATE)) {
+            pmlmeext->cur_channel = set_ch_parm->ch;
+            pmlmeext->cur_bwmode = set_ch_parm->bw;
+            pmlmeext->cur_ch_offset = set_ch_parm->ch_offset;
+        }
+        
 	LeaveAllPowerSaveModeDirect(padapter);
 	
 	set_channel_bwmode(padapter, set_ch_parm->ch, set_ch_parm->ch_offset, set_ch_parm->bw);

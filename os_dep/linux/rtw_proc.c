@@ -3884,6 +3884,17 @@ static int proc_get_best_chan(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int proc_get_acs_current_channel(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *adapter = (_adapter *)rtw_netdev_priv(dev);
+	if (IS_ACS_ENABLE(adapter))
+		rtw_acs_current_info_dump(m, adapter);
+	else
+		_RTW_PRINT_SEL(m,"ACS disabled\n");
+	return 0;
+}
+
 static ssize_t proc_set_acs(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
 {
 #ifdef CONFIG_RTW_ACS_DBG
@@ -5426,11 +5437,499 @@ static ssize_t proc_set_amsdu_mode(struct file *file, const char __user *buffer,
 
 }
 
+static ssize_t proc_set_thermal_state(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv *pregpriv = &padapter->registrypriv;
+	HAL_DATA_TYPE *pHalData = GET_HAL_DATA(padapter);
+	char tmp[32];
+	u32 offset_temp;
+
+	if (!padapter)
+		return -EFAULT;
+
+	if (count < 1) {
+		RTW_INFO("Set thermal_state Argument error. \n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%u", &offset_temp);
+		if (num < 1)
+			return count;
+	}
+
+	if (offset_temp > 70) {
+		RTW_INFO("Set thermal_state Argument range error. \n");
+		return -EFAULT;
+	}
+
+	RTW_INFO("Write to thermal_state offset tempC : %d\n", offset_temp);
+	pHalData->eeprom_thermal_offset_temperature = (u8)offset_temp;
+
+	return count;
+}
+
+static int proc_get_thermal_state(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+        struct dm_struct *p_dm_odm = adapter_to_phydm(padapter);
+        HAL_DATA_TYPE *pHalData = GET_HAL_DATA(padapter);
+
+        u8 rx_cnt = rf_type_to_rf_rx_cnt(pHalData->rf_type);
+        int thermal_value = 0;
+        int thermal_offset = 0;
+        u32 thermal_reg_mask = 0;
+        int temperature_offset = 40;	// measured value. see comment in 8812eu commit/5b7a66d for details
+        int temperature = 0; 
+
+        thermal_reg_mask = 0x007e; // in _dpk_thermal_read_8733b()
+        temperature_offset = (pHalData->eeprom_thermal_offset_temperature==0)? 
+				temperature_offset: pHalData->eeprom_thermal_offset_temperature;
+        
+        phy_set_rf_reg(padapter, 0, 0x42, BIT19, 0x1);
+        phy_set_rf_reg(padapter, 0, 0x42, BIT19, 0x0);
+        phy_set_rf_reg(padapter, 0, 0x42, BIT19, 0x1);
+
+        rtw_usleep_os(15);    // 15us in _dpk_thermal_read_8733b()
+        
+        thermal_value = phy_query_rf_reg(padapter, 0, 0x42, thermal_reg_mask);
+        thermal_offset = pHalData->eeprom_thermal_meter;
+        temperature = (((thermal_value-thermal_offset) *5)/2) + temperature_offset;
+
+        RTW_PRINT_SEL(m, "rf_path: 0, thermal_value: %d, offset: %d, temperature: %d\n", thermal_value, thermal_offset, temperature);
+
+        return 0;
+}
+
+static ssize_t proc_set_narrowband(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv *pregpriv = &padapter->registrypriv;
+	HAL_DATA_TYPE *pHalData = GET_HAL_DATA(padapter);
+	char tmp[32];
+	u32 nbw;
+
+	if (!padapter)
+		return -EFAULT;
+
+	if (count < 1) {
+		RTW_INFO("Set narrowband argument error. \n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%u", &nbw);
+		if (num < 1)
+			return count;
+	}
+
+	if ( !((nbw == 5) || (nbw == 10) || (nbw == 20)) ) {
+		RTW_INFO("Set narrowband argument range error. \n");
+		return -EFAULT;
+	}
+
+	RTW_INFO("Set narrowband : %d\n", nbw);
+
+	switch (nbw) {
+	case 5:
+		phy_set_bb_reg(padapter, 0x9b0, 0xc0, 0x1);
+		phy_set_bb_reg(padapter, 0x9b4, 0x700, 0x1);
+		phy_set_bb_reg(padapter, 0x9f0, 0xf, 0xa);
+		phy_set_bb_reg(padapter, 0x81c, 0xf, 0x0);
+		break;
+	case 10:
+		phy_set_bb_reg(padapter, 0x9b0, 0xc0, 0x2);
+		phy_set_bb_reg(padapter, 0x9b4, 0x700, 0x2);
+		phy_set_bb_reg(padapter, 0x9f0, 0xf, 0xb);
+		phy_set_bb_reg(padapter, 0x81c, 0xf, 0x0);
+		break;
+	case 20:
+	default:
+		phy_set_bb_reg(padapter, 0x9b0, 0xc0, 0x0);
+		phy_set_bb_reg(padapter, 0x9b4, 0x700, 0x3);
+		phy_set_bb_reg(padapter, 0x9f0, 0xf, 0xc);
+		phy_set_bb_reg(padapter, 0x81c, 0xf, 0x9);
+		break;
+	}
+
+	return count;
+}
+static int proc_get_single_tone(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv	*pregpriv = &padapter->registrypriv;
+	struct dm_struct *dm;
+	u32 bit_dis_cca;
+	
+	if (!padapter)
+		return -EFAULT;
+		
+	dm = adapter_to_phydm(padapter);
+
+	
+	RTW_PRINT_SEL(m, "single_tone: <en:0(dis)/1(en)> <rf_path:0(A)/1(B)/4(AB)>\n");
+
+	return 0;
+}
+
+static ssize_t proc_set_single_tone(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv	*pregpriv = &padapter->registrypriv;
+	struct dm_struct *dm;
+	char tmp[32];
+	u32 en, rf_path;
+
+	if (!padapter)
+		return -EFAULT;
+		
+	dm = adapter_to_phydm(padapter);
+	
+	if (count < 2) {
+		RTW_INFO("Set single_tone Argument error.\n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%u %u", &en, &rf_path);
+		if (num < 1)
+			return count;
+	}
+	
+	if (rf_path != RF_PATH_A && rf_path != RF_PATH_B && rf_path != RF_PATH_AB) {
+		RTW_INFO("Set single_tone rf_path Argument range error.\n");
+		return -EFAULT;
+	}
+	
+	if (en != 0 && en != 1) {
+		RTW_INFO("Set single_tone en Argument range error.\n");
+		return -EFAULT;
+	}
+	
+	if (en == 1) {
+		phydm_mp_set_single_tone(dm, true, rf_path);
+	} else {
+		phydm_mp_set_single_tone(dm, false, rf_path);
+	}
+	
+	RTW_INFO("Write to single_tone: en %d, path %d\n", en, rf_path);
+
+	return count;
+}
+
+int proc_get_write_rfreg(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+
+        RTW_PRINT_SEL(m, "RF reg read & write usage:\n");
+        RTW_PRINT_SEL(m, "\n");
+        RTW_PRINT_SEL(m, "Write RF reg: \n");
+        RTW_PRINT_SEL(m, "\techo \"<8'h_addr> <20'h_val>\" > write_rfreg \n");
+        RTW_PRINT_SEL(m, "Read RF reg: \n");
+        RTW_PRINT_SEL(m, "\techo \"<8'h_addr>\" > read_rfreg && cat read_rfreg\n");
+	return 0;
+}
+
+
+ssize_t proc_set_write_rfreg(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	char tmp[32];
+	u32 addr, val;
+
+	if (count < 2) {
+		RTW_INFO("%s: argument size is less than 2\n", __FUNCTION__);
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%x %x", &addr, &val);
+		if (num != 2) {
+			RTW_INFO("%s: invalid parameter!\n", __FUNCTION__);
+			return count;
+		}
+                phy_set_rf_reg(padapter, RF_PATH_A, addr&0xff, val&0xfffff, 0xfffff);
+	}
+	return count;
+}
+
+static u8 proc_get_read_rf_addr = 0x0;
+
+int proc_get_read_rfreg(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+
+	RTW_PRINT_SEL(m, "phy_query_rf_reg(RF_PATH_A, 0x%x)=0x%x\n", 
+	  proc_get_read_rf_addr, 
+	  phy_query_rf_reg(padapter, RF_PATH_A, proc_get_read_rf_addr, 0xfffff)
+	);
+	return 0;
+}
+
+ssize_t proc_set_read_rfreg(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	char tmp[16];
+	u8 addr;
+
+	if (count < 1) {
+		RTW_INFO("%s: argument size is less than 1\n", __FUNCTION__);
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+
+		int num = sscanf(tmp, "%hhx", &addr);
+
+		if (num != 1) {
+			RTW_INFO("%s: invalid parameter\n", __FUNCTION__);
+			return count;
+		}
+		proc_get_read_rf_addr = addr;
+	}
+	return count;
+}
+static int proc_get_edcca_threshold_jaguar3_override(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv	*pregpriv = &padapter->registrypriv;
+
+	RTW_PRINT_SEL(m, "Set EDCCA Threshold Override For Realtek Jaguar3 Series (8723F/8735B/8730A/8822C/8812F/8197G/8822E/8198F/8814B/8814C/8733B)\n");
+	RTW_PRINT_SEL(m, "Github: libc0607\n");
+	RTW_PRINT_SEL(m, "\n");
+	RTW_PRINT_SEL(m, "Usage: echo \"<en> <dBm_l2h>\" > edcca_threshold_jaguar3_override\n");
+	RTW_PRINT_SEL(m, "\ten: 0-disable, 1-enable\n");
+	RTW_PRINT_SEL(m, "\tdBm_l2h: Energy CCA level in dBm, range: [-100, 7]; it's -72dBm (0xB0-248) by default from my adaptor's register.\n");
+	RTW_PRINT_SEL(m, "I don't know the actual range since I don't have the detailed datasheet with register definitions, but in theory it can be tuned in +7dBm ~ -240dBm. A threshold below -100dBm seems make no sense so I manually disabled them.\n");
+	RTW_PRINT_SEL(m, "Note: the H2L value is automatically set with 8dBm (default) lower as hysteresis.\n");
+	RTW_PRINT_SEL(m, "Note 2: It's a bit similar to the 'thresh62' patch in ath9k.\n");
+	RTW_PRINT_SEL(m, "\n");
+	RTW_PRINT_SEL(m, "e.g.  To set the threshold to l2h=-40dBm (then h2l=-48dBm), use \n");
+	RTW_PRINT_SEL(m, "\techo \"1 -40\" > edcca_threshold_jaguar3_override\n");
+	RTW_PRINT_SEL(m, "\n");
+	RTW_PRINT_SEL(m, "Disclaimer: There's no guarantee on performance. \n");
+	RTW_PRINT_SEL(m, "This operation may damage your hardware.\n");
+	RTW_PRINT_SEL(m, "You should obey the law, and use it at your own risk.\n");
+
+	return 0;
+}
+
+static ssize_t proc_set_edcca_threshold_jaguar3_override(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv *pregpriv = &padapter->registrypriv;
+	char tmp[32];
+	s32 edcca_thresh = -72;
+	u8 edcca_thresh_en = 0;
+
+	if (!padapter)
+		return -EFAULT;
+
+	if (count < 2) {
+		RTW_INFO("edcca_threshold_jaguar3_override Argument error. \n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%hhu %d", &edcca_thresh_en, &edcca_thresh);
+		if (num < 1)
+			return count;
+	}
+
+	if (edcca_thresh > 7 || edcca_thresh < -100) {
+		RTW_INFO("edcca_threshold_jaguar3_override dBm_l2h out of range: %d\n", edcca_thresh);
+		return count;
+	}
+
+	RTW_INFO("Write to edcca_threshold_jaguar3_override: EDCCA override %s, L2H threshold = %ddBm\n", (edcca_thresh_en==1)? "enabled": "disabled", edcca_thresh);
+
+	pregpriv->edcca_thresh_override_en = edcca_thresh_en;
+	pregpriv->edcca_thresh_l2h_override = (s8)edcca_thresh;
+
+	return count;
+}
+
+/*
+static int proc_get_monitor_chan_override(struct seq_file *m, void *v)
+{
+	struct net_device *dev = m->private;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	struct registry_priv	*pregpriv = &padapter->registrypriv;
+
+        RTW_PRINT_SEL(m, "rtw_set_chbw_cmd() API wrapper\n");
+	RTW_PRINT_SEL(m, "Usage: echo \"<chan> <bw> <offset>\" > monitor_chan_override\n");
+	RTW_PRINT_SEL(m, "chan: 36~177, freq=channel*5+5000\n");
+	RTW_PRINT_SEL(m, "bw: 5:5M/6:10M/0:20M/1:40M\n");
+	RTW_PRINT_SEL(m, "offset: 0:no_ext, 1-upper, 2-lower\n");
+	RTW_PRINT_SEL(m, "\n");
+	RTW_PRINT_SEL(m, "e.g.  To transmit in 5805MHz with 10MHz BW, use \n");
+	RTW_PRINT_SEL(m, "\techo \"161 6 0\" > monitor_chan_override\n");
+	RTW_PRINT_SEL(m, "\n");
+
+	return 0;
+}
+
+static ssize_t proc_set_monitor_chan_override(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	char tmp[32];
+	u32 chan = 149;
+	u32 bw = 20;
+	u32 offset = 0;
+	struct dm_struct *dm;
+
+	if (!padapter)
+		return -EFAULT;
+		
+        dm = adapter_to_phydm(padapter);
+        
+	if (count < 2) {
+		RTW_INFO("monitor_chan_override Argument error. \n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%u %u %u", &chan, &bw, &offset);
+		if (num < 1)
+			return count;
+	}
+
+	if (bw < 0 || bw > 6 || bw == 3 || bw == 4 || bw == 2) {
+		RTW_INFO("monitor_chan_override Bandwidth error: %u\n", bw);
+		return count;
+	}
+	
+	if (chan > 177 || chan < 36) {
+		RTW_INFO("monitor_chan_override Channel error: %u\n", chan);
+		return count;
+	}
+	
+	if (offset > 2 || offset < 0) {
+		RTW_INFO("monitor_chan_override Offset error: %u\n", offset);
+		return count;
+	}
+
+	RTW_INFO("Write to monitor_chan_override: chan=%d, bw=%d, offset=%d\n", chan, bw, offset);
+	rtw_set_chbw_cmd(padapter, (u8)chan, bw, (u8)offset, RTW_CMDF_WAIT_ACK);
+
+	return count;
+}
+*/
+/*
+static ssize_t proc_set_config_phydm_switch_bandwidth_8733b(struct file *file, const char __user *buffer, size_t count, loff_t *pos, void *data)
+{
+	struct net_device *dev = data;
+	_adapter *padapter = (_adapter *)rtw_netdev_priv(dev);
+	char tmp[32];
+	u32 pri_chan = 0;
+	u32 bw = 20;
+	struct dm_struct *dm;
+	bool ret;
+
+	if (!padapter)
+		return -EFAULT;
+		
+        dm = adapter_to_phydm(padapter);
+        
+	if (count < 2) {
+		RTW_INFO("config_phydm_switch_bandwidth_8733b Argument error. \n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(tmp)) {
+		rtw_warn_on(1);
+		return -EFAULT;
+	}
+
+	if (buffer && !copy_from_user(tmp, buffer, count)) {
+		int num = sscanf(tmp, "%u %u", &pri_chan, &bw);
+		if (num < 1)
+			return count;
+	}
+
+	if (bw < 0 || bw > 6 || bw == 3 || bw == 4) {
+		RTW_INFO("config_phydm_switch_bandwidth_8733b Bandwidth error: %u\n", bw);
+		return count;
+	}
+	
+	if (pri_chan > 4) {
+		RTW_INFO("config_phydm_switch_bandwidth_8733b pri_chan error: %u\n", pri_chan);
+		return count;
+	}
+
+        // 80MHz 
+        if (bw == 2) {
+                phydm_bw80_enable_8733b(dm, TRUE);
+        } else {
+                phydm_bw80_enable_8733b(dm, FALSE);
+        }
+        
+	ret = config_phydm_switch_bandwidth_8733b(dm, pri_chan, bw);
+	RTW_INFO("Write to config_phydm_switch_bandwidth_8733b: pri_chan=%d, bw=%d, ret=%d\n", pri_chan, bw, ret? 1: 0);
+
+	return count;
+}
+*/
 /*
 * rtw_adapter_proc:
 * init/deinit when register/unregister net_device
 */
 const struct rtw_proc_hdl adapter_proc_hdls[] = {
+        RTW_PROC_HDL_SSEQ("thermal_state", proc_get_thermal_state, proc_set_thermal_state),
+        RTW_PROC_HDL_SSEQ("narrowband", NULL, proc_set_narrowband),
+        RTW_PROC_HDL_SSEQ("single_tone", proc_get_single_tone, proc_set_single_tone),
+        RTW_PROC_HDL_SSEQ("write_rfreg", proc_get_write_rfreg, proc_set_write_rfreg),
+        RTW_PROC_HDL_SSEQ("read_rfreg", proc_get_read_rfreg, proc_set_read_rfreg),
+        RTW_PROC_HDL_SSEQ("edcca_threshold_jaguar3_override", proc_get_edcca_threshold_jaguar3_override, proc_set_edcca_threshold_jaguar3_override),
+        //RTW_PROC_HDL_SSEQ("monitor_chan_override", proc_get_monitor_chan_override, proc_set_monitor_chan_override),
+        //RTW_PROC_HDL_SSEQ("config_phydm_switch_bandwidth_8733b", NULL, proc_set_config_phydm_switch_bandwidth_8733b),
+      
 #if RTW_SEQ_FILE_TEST
 	RTW_PROC_HDL_SEQ("seq_file_test", &seq_file_test, NULL),
 #endif
@@ -5738,6 +6237,7 @@ const struct rtw_proc_hdl adapter_proc_hdls[] = {
 
 #ifdef CONFIG_RTW_ACS
 	RTW_PROC_HDL_SSEQ("acs", proc_get_best_chan, proc_set_acs),
+	RTW_PROC_HDL_SSEQ("acs_current", proc_get_acs_current_channel, NULL),
 	RTW_PROC_HDL_SSEQ("chan_info", proc_get_chan_info, NULL),
 #endif
 

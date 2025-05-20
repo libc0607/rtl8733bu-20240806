@@ -4846,7 +4846,29 @@ static void do_queue_select(_adapter	*padapter, struct pkt_attrib *pattrib)
  *	0	success, hardware will handle this xmit frame(packet)
  *	<0	fail
  */
- #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24))
+int rtw_ieee80211_radiotap_iterator_next(struct ieee80211_radiotap_iterator *iterator);
+int rtw_ieee80211_radiotap_iterator_init(
+	struct ieee80211_radiotap_iterator *iterator,
+	struct ieee80211_radiotap_header *radiotap_header,
+	int max_length, const struct ieee80211_radiotap_vendor_namespaces *vns);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24))
+static struct xmit_frame* monitor_alloc_mgtxmitframe (struct xmit_priv *pxmitpriv) {
+	int tries;
+	int delay = 300;
+	struct xmit_frame *pmgntframe = NULL;
+
+	for(tries = 0; tries < 4; tries++) {
+		if(unlikely(tries > 0)) {
+			rtw_udelay_os(delay);
+			delay += delay/2;
+		}
+		pmgntframe = alloc_mgtxmitframe(pxmitpriv);
+		if (pmgntframe != NULL) 
+		        break;
+	}
+	return pmgntframe;
+}
+
 s32 rtw_monitor_xmit_entry(struct sk_buff *skb, struct net_device *ndev)
 {
 	_adapter *padapter = (_adapter *)rtw_netdev_priv(ndev);
